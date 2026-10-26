@@ -1582,27 +1582,22 @@ describe("antigravity-cli installer", () => {
   });
 });
 
-/**
- * opencode v2 (`opencode2`) is registered in the SAME `~/.config/opencode/opencode.json[c]` as v1,
- * under the SAME `plugin` key. It has to be: the two CLIs read one file, v1 REJECTS the whole file
- * on v2's `plugins` key, and one entry serves both because they resolve a plugin directory
- * differently (v1 via package.json `main`, v2 via `<dir>/index.js`). See src/opencode2.ts.
- */
 describe("opencode2 installer", () => {
   const cfgPath = (ctx: InstallCtx) => join(ctx.home, ".config", "opencode", "opencode.json");
 
   it("registers the package root in opencode's own config", () => {
     const ctx = makeCtx();
+    writeJsonAt(cfgPath(ctx), { plugins: [] });
     expect(run(["install", "opencode2"], ctx)).toBe(0);
-    expect(readJson(cfgPath(ctx)).plugin).toEqual([ctx.pkgRoot]);
+    expect(readJson(cfgPath(ctx)).plugins).toEqual([ctx.pkgRoot]);
   });
 
   it("wiring both opencode and opencode2 leaves ONE shared entry", () => {
     // The entry is identical, so the MARKER filter has to collapse them — two copies of the same
     // path would make opencode2 load the plugin twice.
     const ctx = makeCtx();
-    run(["install", "opencode"], ctx);
-    run(["install", "opencode2"], ctx);
+    run(["install", "opencode", "opencode2"], ctx);
+    run(["install", "opencode", "opencode2"], ctx);
     expect(readJson(cfgPath(ctx)).plugin).toEqual([ctx.pkgRoot]);
   });
 
@@ -1619,6 +1614,72 @@ describe("opencode2 installer", () => {
     // …whereas v1 DOES treat the directory as a signal, which is exactly the difference.
     const opencode = INSTALLERS.find((i) => i.name === "opencode")!;
     expect(opencode.detect(withDir)).toBe(true);
+  });
+
+  it("uses plugins when opencode is absent", () => {
+    const ctx = makeCtx();
+    const savedPath = process.env.PATH;
+    process.env.PATH = ctx.home;
+    try {
+      expect(run(["install", "opencode2"], ctx)).toBe(0);
+      expect(readJson(cfgPath(ctx))).toEqual({ plugins: [ctx.pkgRoot] });
+    } finally {
+      process.env.PATH = savedPath;
+    }
+  });
+
+  it.each([
+    ["opencode", "opencode2"],
+    ["opencode2", "opencode"],
+  ])("keeps a shared plugin entry when explicitly installing %s and %s", (first, second) => {
+    const ctx = makeCtx();
+    const savedPath = process.env.PATH;
+    process.env.PATH = ctx.home;
+    try {
+      expect(run(["install", first, second], ctx)).toBe(0);
+      expect(readJson(cfgPath(ctx))).toEqual({ plugin: [ctx.pkgRoot] });
+    } finally {
+      process.env.PATH = savedPath;
+    }
+  });
+
+  it.each(["opencode", "opencode2"])(
+    "%s preserves canonical config and removes duplicate registrations",
+    (harness) => {
+      const ctx = makeCtx();
+      const path = join(ctx.home, ".config", "opencode", "opencode.jsonc");
+      mkdirSync(dirname(path), { recursive: true });
+      const original =
+        '{\n  // user configuration\n  "model": "provider/model",\n  "plugin": ["legacy-other", "/old/coding-agents"],\n  "plugins": ["native-other", "/another/coding-agents"],\n}\n';
+      writeFileSync(path, original);
+      expect(run(["install", harness], ctx)).toBe(0);
+      expect(run(["install", harness], ctx)).toBe(0);
+      const text = readFileSync(path, "utf8");
+      expect(parseJsonc(text)).toEqual({
+        model: "provider/model",
+        plugin: ["legacy-other"],
+        plugins: ["native-other", ctx.pkgRoot],
+      });
+      expect(text).toContain("// user configuration");
+      expect(readFileSync(`${path}.hindsight-backup`, "utf8")).toBe(original);
+    }
+  );
+
+  it.each(["opencode", "opencode2"])("%s uninstall removes entries from both keys", (harness) => {
+    const ctx = makeCtx();
+    writeJsonAt(cfgPath(ctx), {
+      plugin: [ctx.pkgRoot],
+      plugins: ["other", ctx.pkgRoot],
+    });
+    expect(run(["uninstall", harness], ctx)).toBe(0);
+    expect(readJson(cfgPath(ctx))).toEqual({ plugins: ["other"] });
+  });
+
+  it("uninstall removes a plugins-only registration", () => {
+    const ctx = makeCtx();
+    writeJsonAt(cfgPath(ctx), { plugins: [ctx.pkgRoot] });
+    expect(run(["uninstall", "opencode2"], ctx)).toBe(0);
+    expect(readJson(cfgPath(ctx))).toEqual({});
   });
 });
 

@@ -128,10 +128,12 @@ npx @vectorize-io/hindsight-coding-agents install opencode2
 ```
 
 opencode v2 (`npm @opencode/cli`) exposes an `opencode2` binary alias **alongside** `opencode` and
-rewrote the plugin API, so it is a harness of its own. It writes the same plugin entry to the same
-`~/.config/opencode/opencode.json` — the two CLIs share that file, and v1 rejects the whole config
-if it sees v2's `plugins` key — and each CLI then loads its own entry point from the one registered
-path. So installing either harness wires both, and uninstalling either removes the shared entry.
+rewrote the plugin API, so it is a harness of its own. Both hosts share
+`~/.config/opencode/opencode.json[c]` and load their own entry point from the registered package
+directory. The installer uses `plugins` when that array already exists, or when installing only
+`opencode2` with no `opencode` executable on PATH. Otherwise it uses `plugin`, which v1 accepts
+and v2 merges into its configuration in memory. v2 does not rewrite the file. Reinstalling keeps
+one Hindsight entry across both arrays; uninstalling either harness removes it from both.
 
 Two differences from v1, both because of the host: the one-time codebase survey runs under another
 installed agent's CLI (v2 plugins cannot define the read-only agent the survey needs), and the seed
@@ -422,8 +424,8 @@ can ask the agent itself. Manual wiring per harness, if you prefer:
 { "plugin": ["/path/to/hindsight-coding-agents"] }
 ```
 
-One entry, both CLIs: v1 resolves that directory through `package.json` `main`, v2 through its
-`index.js`, so each loads its own plugin.
+For a v2-only config, use `plugins` in place of `plugin`. v1 resolves that directory through
+`package.json` `main`, v2 through its `index.js`, so each loads its own plugin.
 
 **Claude Code** and **Codex** get their full three-hook + MCP wiring from this package's own
 installer — `npx @vectorize-io/hindsight-coding-agents install claude-code` / `install codex`. This package's `bin`

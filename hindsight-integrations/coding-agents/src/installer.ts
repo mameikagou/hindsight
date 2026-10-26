@@ -186,10 +186,7 @@ function backupOnce(path: string): void {
  * correctly came back stripped. `jsonc-parser` computes a minimal text edit instead, so everything
  * we did not touch survives byte for byte.
  *
- * Limited to a single key on purpose. A whole-object write is what forces a re-serialize, and both
- * callers only ever mutate `plugin`; a general "merge this object" helper could not preserve
- * anything. Comments INSIDE the edited value are still lost — the array is re-emitted — but the
- * rest of the document, which is all a user notices, is not.
+ * 每次只修改一个字段，保留其他字段的注释与格式；被修改数组内部的注释会随数组重新输出。
  */
 function writeJsonc(path: string, key: string, value: unknown): void {
   const text = existsSync(path) ? readFileSync(path, "utf8") : "";
@@ -396,17 +393,9 @@ function runDcodePlugin(args: string[]): boolean {
 }
 
 /**
- * Register/unregister the package root in `~/.config/opencode`'s `plugin` array. Shared verbatim by
- * `opencode` and `opencode2`: the two CLIs read the SAME config file, and v1 REJECTS the whole file
- * on v2's `plugins` key ("Configuration is invalid … Unrecognized key: plugins"), so a v2-specific
- * entry is not an option. One entry serves both because they resolve a plugin directory
- * differently — v1 follows package.json `main` (dist/index.js), v2 loads `<dir>/index.js` — and v2
- * migrates the legacy `plugin` key to `plugins` for itself. A host that looks the package up by name
- * (v2 given a non-absolute entry, v1 1.18+) reads `exports["./server"]` first, whose default
- * serves both contracts. See src/opencode2.ts.
- *
- * Consequences worth knowing: installing either harness wires the other one too (the MARKER filter
- * keeps that idempotent), and uninstalling either removes the shared entry.
+ * 两个宿主共用配置文件和插件路径。v1 只接受 plugin；v2 在内存中合并 plugin 与 plugins，
+ * 不会迁移磁盘文件。已有 plugins 的配置沿用该字段；其他配置在可能需要 v1 时使用 plugin。
+ * 插件目录如何加载各自的入口见 src/opencode2.ts。
  */
 function registerOpencodePlugin(c: InstallCtx, name: string): void {
   const path = opencodeConfigPath(c);
@@ -419,10 +408,18 @@ function registerOpencodePlugin(c: InstallCtx, name: string): void {
     }
     cfg = parsed;
   }
-  const plugins: unknown[] = Array.isArray(cfg.plugin) ? cfg.plugin : [];
-  // writeJsonc, not writeJson: this config routinely carries comments, and re-serializing the
-  // parsed object would strip every one of them even though the read succeeded.
-  writeJsonc(path, "plugin", [...plugins.filter((p) => !String(p).includes(MARKER)), c.pkgRoot]);
+  const useNativeKey =
+    Array.isArray(cfg.plugins) ||
+    (name === "opencode2" && !c.args?.includes("opencode") && !onPath("opencode"));
+  const targetKey = useNativeKey ? "plugins" : "plugin";
+  for (const key of ["plugin", "plugins"]) {
+    const plugins: unknown[] = Array.isArray(cfg[key]) ? cfg[key] : [];
+    const kept = plugins.filter((entry) => !String(entry).includes(MARKER));
+    if (key === targetKey) kept.push(c.pkgRoot);
+    if (key === targetKey || kept.length !== plugins.length) {
+      writeJsonc(path, key, kept.length ? kept : undefined);
+    }
+  }
   c.log?.(`${name}: plugin registered in ${path}`);
 }
 
@@ -430,9 +427,14 @@ function unregisterOpencodePlugin(c: InstallCtx, name: string): void {
   const path = opencodeConfigPath(c);
   if (!existsSync(path)) return;
   const cfg = parseJsonc(readFileSync(path, "utf8"));
-  if (!cfg || !Array.isArray(cfg.plugin)) return;
-  const kept = cfg.plugin.filter((p: unknown) => !String(p).includes(MARKER));
-  writeJsonc(path, "plugin", kept.length ? kept : undefined);
+  if (!cfg) return;
+  for (const key of ["plugin", "plugins"]) {
+    if (!Array.isArray(cfg[key])) continue;
+    const kept = cfg[key].filter((entry: unknown) => !String(entry).includes(MARKER));
+    if (kept.length !== cfg[key].length) {
+      writeJsonc(path, key, kept.length ? kept : undefined);
+    }
+  }
   c.log?.(`${name}: plugin entry removed`);
 }
 

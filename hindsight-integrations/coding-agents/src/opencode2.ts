@@ -5,16 +5,9 @@
  * v1 loads a function returning named hooks, v2 loads a `{id, setup(ctx)}` object. Handing either
  * host the other's export loads a plugin that registers nothing and reports no error.
  *
- * The two hosts nonetheless share one registered path. opencode v1 and v2 read the SAME
- * `~/.config/opencode/opencode.json`, and v1 REJECTS the whole file when it sees v2's `plugins` key
- * ("Configuration is invalid … Unrecognized key: plugins"), so a second config entry is not an
- * option. What makes one entry serve both is that they resolve a plugin DIRECTORY differently:
- * v1 follows `package.json` `main` (→ dist/index.js, the v1 plugin), v2 looks for `<dir>/index.js`
- * and ignores `main`. The package therefore ships a root `index.js` re-exporting this file, and the
- * package root already registered in the user's `plugin` array — which v2 migrates to `plugins` for
- * itself — drives the right plugin under each host. Written against opencode 1.18.9 and the v2
- * beta, then re-checked on stable 2.0.3, whose loader still resolves `<dir>/index.js` and whose
- * live session registers the native tools and answers from injected memory.
+ * 两个宿主共用 ~/.config/opencode/opencode.json[c] 和一个插件目录。v1 根据 package.json
+ * 的 main 加载 dist/index.js，v2 加载目录下的 index.js。v1 只接受 plugin 字段，v2 在
+ * 内存中合并 plugin 与 plugins，不修改磁盘配置；安装器按现有配置和目标宿主选择字段。
  *
  * The harness reports as "opencode2" rather than "opencode": that selects the `harnesses.opencode2`
  * config section and keeps v2 sessions attributable in diagnostics separately from v1's. The bank
